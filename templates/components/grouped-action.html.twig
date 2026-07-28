@@ -1,0 +1,29 @@
+{% set tag = component.getUrl ? 'a' : 'button' %}
+{% set iconHtml = component.getIcon(component.getGroupedIcon) ? generateIconHtml(component.getIcon(component.getGroupedIcon), null, null, component.getIconSize ?? 'sm') : null %}
+
+<{{ tag }}
+    {{ attrs({
+        class: classes('sy sy-dropdown-item sy-ac', {
+            'sy-disabled': component.isDisabled,
+        }),
+        type: component.getUrl ? false : 'button',
+        disabled: component.isDisabled and not component.getUrl,
+        'aria-disabled': component.isDisabled ? 'true' : false,
+        href: component.getUrl ?: false,
+        target: component.shouldOpenUrlInNewTab ? '_blank' : false,
+        title: component.getTooltip ?: false,
+    }, component.getExtraAttributes) }}
+    {%- if not component.getUrl %}
+        {%- if component.getClientClickHandler %} {{ live_action(component.getClientClickHandler) }}
+        {%- elseif component.shouldClose %} {{ live_action('unmountAction') }}
+        {%- else %} {{ live_action('mountAction', {
+            name: component.getName,
+            ...(component.getInvokedArguments ? { arguments: component.getInvokedArguments } : {}),
+            ...(component.getContext ? { context: component.getContext } : {}),
+        }) }}
+        {%- endif %}
+    {%- endif %}
+>
+    {{- iconHtml -}}
+    <span class="sy-dropdown-item-label">{{ component.getLabel ?? component.getName }}</span>
+</{{ tag }}>

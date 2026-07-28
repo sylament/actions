@@ -1,0 +1,24 @@
+{% if component.hasDropdown %}
+    {% component 'SylamentSupport:Dropdown' with {
+        placement: component.getDropdownPlacement ?? 'bottom-start',
+        offset: component.getDropdownOffset ?? 8,
+        flip: component.hasDropdownFlip,
+        width: component.getDropdownWidth,
+        maxHeight: component.getDropdownMaxHeight,
+    }|merge(component.getExtraDropdownAttributeBag.toScalarAttributes) %}
+        {% block trigger %}
+            {% include component.getTriggerTemplate with { group: component } only %}
+        {% endblock %}
+        {% block content %}
+            {% for action in component.getActions|filter(action => action.isVisible) %}
+                {{ renderComponent(action) }}
+            {% endfor %}
+        {% endblock %}
+    {% endcomponent %}
+{% else %}
+    <div class="sy sy-ac-group">
+        {% for action in component.getActions|filter(action => action.isVisible) %}
+            {{ renderComponent(action) }}
+        {% endfor %}
+    </div>
+{% endif %}

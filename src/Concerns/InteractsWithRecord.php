@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Sylament\Actions\Concerns;
 
+use function Sylament\Support\filled;
+
 trait InteractsWithRecord
 {
     protected mixed $record = null;
@@ -15,8 +17,23 @@ trait InteractsWithRecord
         return $this;
     }
 
+    public function hasRecord(): bool
+    {
+        return filled($this->record);
+    }
+
     public function getRecord(): mixed
     {
-        return $this->evaluate($this->record);
+        $record = $this->evaluate($this->record);
+
+        if ($record !== null) {
+            return $record;
+        }
+
+        if (method_exists($this, 'getGroup')) {
+            return $this->getGroup()?->getRecord();
+        }
+
+        return null;
     }
 }

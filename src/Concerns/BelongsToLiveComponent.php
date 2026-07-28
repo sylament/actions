@@ -20,10 +20,19 @@ trait BelongsToLiveComponent
 
     public function getLiveComponent(): InteractsWithActions
     {
-        if ($this->liveComponent === null) {
-            throw new RuntimeException('Action is not part of LiveComponent');
-        }
+        return $this->getLiveComponentOrNull()
+            ?? throw new RuntimeException('Action is not part of LiveComponent');
+    }
 
-        return $this->liveComponent;
+    public function getLiveComponentOrNull(): ?InteractsWithActions
+    {
+        return $this->liveComponent
+            ?? self::asActionsHost($this->getSchemaContainer()?->getLiveComponentOrNull())
+            ?? self::asActionsHost($this->getSchemaComponent()?->getLiveComponentOrNull());
+    }
+
+    private static function asActionsHost(?object $host): ?InteractsWithActions
+    {
+        return $host instanceof InteractsWithActions ? $host : null;
     }
 }

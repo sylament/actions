@@ -1,0 +1,28 @@
+{% set clickParameters = component.getClientClickHandler
+    ? { action: component.getClientClickHandler }
+    : (component.shouldClose
+        ? { action: 'unmountAction' }
+        : {
+            action: 'mountAction',
+            name: component.getName,
+            ...(component.getInvokedArguments ? { arguments: component.getInvokedArguments } : {}),
+            ...(component.getContext ? { context: component.getContext } : {}),
+        }) %}
+{% set mountAttributes = component.getUrl or component.isDisabled
+    ? {}
+    : stimulus_action('live', 'action', null, clickParameters).toArray() %}
+
+{% set extraAttributes = component.getExtraAttributeBag.toScalarAttributes %}
+{% set rootClasses = classes('sy-ac', extraAttributes.class ?? null) %}
+{% component 'SylamentSupport:IconButton' with {
+    icon: component.getIcon,
+    label: component.getLabel ?? component.getName,
+    color: component.getColor,
+    size: component.getSize ?? 'md',
+    iconSize: component.getIconSize,
+    disabled: component.isDisabled,
+    tag: component.getUrl ? 'a' : 'button',
+    href: component.getUrl,
+    target: component.shouldOpenUrlInNewTab ? '_blank' : null,
+    ...(component.getTooltip ? { title: component.getTooltip } : {}),
+}|merge(extraAttributes)|merge({ class: rootClasses })|merge(mountAttributes) %}{% endcomponent %}

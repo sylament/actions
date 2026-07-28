@@ -1,0 +1,26 @@
+{% props
+    action,
+    id %}
+
+{# Rendered only while the action is mounted and its modal should be open, so the open
+   state is declared here rather than left to the `sylament-open-modal` event, which a
+   modal first rendered by that same response is not yet listening for. #}
+<twig:SylamentSupport:Modal
+    id="{{ id }}"
+    :open="true"
+    :heading="action.getModalHeading"
+    :description="action.getModalDescription"
+    :icon="action.getModalIcon"
+    :iconColor="action.getModalIconColor"
+    :width="action.getModalWidth"
+>
+    <twig:block name="content">
+        {{- action.getModalContent -}}
+        {{- action.getModalContentFooter -}}
+    </twig:block>
+    <twig:block name="footer">
+        {% for footerAction in action.getVisibleModalFooterActions %}
+            {{- renderComponent(footerAction) -}}
+        {% endfor %}
+    </twig:block>
+</twig:SylamentSupport:Modal>

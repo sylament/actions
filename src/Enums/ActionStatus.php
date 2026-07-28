@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Sylament\Actions\Enum;
+namespace Sylament\Actions\Enums;
 
 enum ActionStatus
 {

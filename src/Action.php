@@ -13,6 +13,7 @@ use Sylament\Actions\Concerns\BelongsToSchemaComponent;
 use Sylament\Actions\Concerns\CanBeDisabled;
 use Sylament\Actions\Concerns\CanBeHidden;
 use Sylament\Actions\Concerns\CanBeOutlined;
+use Sylament\Actions\Concerns\CanCallParentAction;
 use Sylament\Actions\Concerns\CanClose;
 use Sylament\Actions\Concerns\CanNotify;
 use Sylament\Actions\Concerns\CanOpenModal;
@@ -27,6 +28,7 @@ use Sylament\Actions\Concerns\HasLabel;
 use Sylament\Actions\Concerns\HasLifecycleHooks;
 use Sylament\Actions\Concerns\HasMountableArguments;
 use Sylament\Actions\Concerns\HasName;
+use Sylament\Actions\Concerns\HasParentActions;
 use Sylament\Actions\Concerns\HasSize;
 use Sylament\Actions\Concerns\InteractsWithRecord;
 use Sylament\Actions\Enums\ActionStatus;
@@ -51,6 +53,7 @@ class Action extends ViewComponent
     use CanBeDisabled;
     use CanBeHidden;
     use CanBeOutlined;
+    use CanCallParentAction;
     use CanClose;
     use CanNotify;
     use CanOpenModal;
@@ -70,6 +73,7 @@ class Action extends ViewComponent
     use HasLifecycleHooks;
     use HasMountableArguments;
     use HasName;
+    use HasParentActions;
     use HasSize;
     use HasTooltip;
     use InteractsWithRecord;
@@ -89,6 +93,10 @@ class Action extends ViewComponent
     protected string|Closure|null $defaultTemplate = self::BUTTON_TEMPLATE;
 
     protected ?ActionStatus $status = null;
+
+    protected ?int $nestingIndex = null;
+
+    protected ?Action $parentAction = null;
 
     final public function __construct(?string $name)
     {
@@ -187,6 +195,30 @@ class Action extends ViewComponent
         return $this->status ?? ActionStatus::Success;
     }
 
+    public function nestingIndex(?int $index): static
+    {
+        $this->nestingIndex = $index;
+
+        return $this;
+    }
+
+    public function getNestingIndex(): ?int
+    {
+        return $this->nestingIndex;
+    }
+
+    public function parentAction(?self $action): static
+    {
+        $this->parentAction = $action;
+
+        return $this;
+    }
+
+    public function getParentAction(): ?self
+    {
+        return $this->parentAction;
+    }
+
     public function getRecord(): mixed
     {
         return $this->evaluate($this->record) ?? $this->getGroup()?->getRecord();
@@ -198,6 +230,17 @@ class Action extends ViewComponent
     public function getContext(): array
     {
         $context = [];
+
+        // A child frame resolves through the parent-modal descent, never through
+        // schema/table context, so this early return skips those for one. Not
+        // Filament-exact, though: Filament's early return sits after its recordKey
+        // block, so a Filament child frame still emits recordKey; this port's sits
+        // before any assignment, so a child frame here emits nothing — recordKey
+        // emission has not been ported to this class yet (HasActions only consumes
+        // an inbound context.recordKey today).
+        if ($this->parentAction instanceof self) {
+            return $context;
+        }
 
         if (filled($schemaComponentKey = ($this->getSchemaContainer() ?? $this->getSchemaComponent())?->getKey())) {
             $context['schemaComponent'] = $schemaComponentKey;

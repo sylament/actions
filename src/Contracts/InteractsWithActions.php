@@ -14,15 +14,25 @@ interface InteractsWithActions
      */
     public function mountAction(string $name, array $arguments = [], array $context = []): mixed;
 
-    public function callMountedAction(): mixed;
+    /**
+     * @param array<mixed> $arguments
+     */
+    public function callMountedAction(array $arguments = []): mixed;
 
-    public function unmountAction(): void;
+    public function unmountAction(bool|string|null $cancelParentActions = null): void;
 
-    public function getMountedAction(): ?Action;
+    public function getMountedAction(?int $actionNestingIndex = null): ?Action;
+
+    /**
+     * @return array<Action>
+     */
+    public function getMountedActions(): array;
 
     public function mountedActionShouldOpenModal(?Action $mountedAction = null): bool;
 
-    public function getMountedModalId(): string;
+    public function getMountedModalId(?int $actionNestingIndex = null): string;
+
+    public function isMountedActionModalOpen(int $actionNestingIndex): bool;
 
     public function getAction(string $name): ?Action;
 }

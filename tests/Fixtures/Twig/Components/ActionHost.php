@@ -31,6 +31,15 @@ class ActionHost implements InteractsWithActions
     #[LiveProp]
     public bool $notified = false;
 
+    /**
+     * Plain public property, not a LiveProp: the arguments test calls mountAction()
+     * and callMountedAction() directly on one instance, so there is no round-trip
+     * for it to survive.
+     *
+     * @var array<string, mixed>|null
+     */
+    public ?array $argumentsSeen = null;
+
     public function deleteAction(): Action
     {
         return Action::make('delete')
@@ -60,6 +69,33 @@ class ActionHost implements InteractsWithActions
         return Action::make('blocked')
             ->disabled()
             ->action(fn (): true => $this->notified = true);
+    }
+
+    public function editAction(): Action
+    {
+        return Action::make('edit')
+            ->modalHeading('Edit thing')
+            ->action(function (array $arguments): void {
+                $this->argumentsSeen = $arguments;
+            })
+            ->extraModalFooterActions([
+                Action::make('confirmDelete')->modalHeading('Really delete?'),
+                Action::make('deeper')->modalHeading('Deeper')
+                    ->cancelParentActionsOnClose('edit')
+                    ->extraModalFooterActions([
+                        Action::make('deepest')->modalHeading('Deepest'),
+                    ]),
+                Action::make('overlayChild')->modalHeading('Over the top')->overlayParentActions(),
+                Action::make('haltingChild')->action(fn (Action $action) => $action->halt()),
+            ]);
+    }
+
+    public function replacerAction(): Action
+    {
+        return Action::make('replacer')
+            ->action(function (): void {
+                $this->replaceMountedAction('headed');
+            });
     }
 
     /**

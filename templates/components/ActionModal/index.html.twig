@@ -1,19 +1,38 @@
 {% props
     action,
-    id %}
+    id,
+    open = true,
+    overlaid = false %}
 
 {# The dismissal wrapper maps the controller's client-close event (ESC, click-away,
-   close button) to a server unmount — without it the next live re-render would
-   resurrect a modal the user already closed. The event bubbles from the dialog;
+   close button, cancel) to a server unmount — without it the next live re-render
+   would resurrect a modal the user already closed. The event bubbles from the dialog;
    the binding cannot sit on the component tag itself because a caller data-action
-   would replace the dialog's own Stimulus wiring in attributes.defaults(). #}
-<div {{ live_action('unmountAction', {}, {}, 'sylament--support--modal:dismissed') }}>
-    {# Rendered only while the action is mounted and its modal should be open, so the open
-       state is declared here rather than left to the `sylament-open-modal` event, which a
-       modal first rendered by that same response is not yet listening for. #}
+   would replace the dialog's own Stimulus wiring in attributes.defaults().
+   The dialog id is index-scoped, which is what gives a frame morph stability: an
+   unchanged frame keeps the same id across re-renders, so idiomorph matches it and
+   it keeps its native open state instead of being replaced.
+
+   The wrapper id is name-scoped, but do NOT read that as forcing a subtree swap on
+   replaceMountedAction(). Idiomorph matches by id-set INTERSECTION, not by node
+   identity, and the dialog id inside this wrapper is unchanged, so the wrapper
+   still matches and morphs in place. That is fine: a morphed node has its
+   attributes synced from the new markup, so the cancelParentActions argument below
+   (per-action, not per-index) is rewritten for the replacing action either way. #}
+<div id="{{ id }}-w-{{ action.getName }}" {{ live_action(
+    'unmountAction',
+    { cancelParentActions: action.getParentActionsToCancelOnClose },
+    {},
+    'sylament--support--modal:dismissed',
+) }}>
+    {# The open state is declared in the markup rather than left to the
+       `sylament-open-modal` event, which a modal first rendered by that same response
+       is not yet listening for. A parent frame stays rendered but closed while a
+       non-overlaying child is on top, so it can morph back open in place. #}
     <twig:SylamentSupport:Modal
         id="{{ id }}"
-        :open="true"
+        :open="open"
+        :overlaid="overlaid and open"
         :heading="action.getModalHeading"
         :description="action.getModalDescription"
         :icon="action.getModalIcon"

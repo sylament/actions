@@ -28,7 +28,7 @@ it('mounts an action into the live prop and renders its modal', function (): voi
 
     expect((string) $component->render())
         ->toContain('sy-modal')
-        ->toContain('data-sylament--support--modal-id-value="delete-modal"');
+        ->toMatch('/data-sylament--support--modal-id-value="sy-[0-9a-f]{8}-action-0"/');
 });
 
 it('runs the mounted closure and unmounts on callMountedAction', function (): void {
@@ -121,13 +121,6 @@ it('throws when a factory method returns a non-Action at runtime', function (): 
     new ActionHost()->getAction('liar');
 })->throws(ActionNotResolvableException::class);
 
-it('throws when resolving a mounted action without a name', function (): void {
-    $host = new ActionHost();
-    $host->mountedActions = [['name' => '', 'arguments' => [], 'context' => []]];
-
-    $host->getMountedAction();
-})->throws(ActionNotResolvableException::class);
-
 it('unmounts instead of crashing when mounting an unresolvable action', function (): void {
     $host = $this->createLiveComponent('ActionHost')->component();
 
@@ -141,4 +134,266 @@ it('unmounts a disabled action without calling it', function (): void {
 
     expect($component->component()->notified)->toBeFalse()
         ->and($component->component()->mountedActions)->toBe([]);
+});
+
+it('appends a second frame and resolves it through the parent modal actions', function (): void {
+    $host = $this->createLiveComponent('ActionHost')->component();
+    $host->mountAction('edit');
+    $host->mountAction('confirmDelete');
+
+    expect($host->mountedActions)->toHaveCount(2)
+        ->and($host->mountedActions[1]['name'])->toBe('confirmDelete')
+        ->and($host->getMountedAction()?->getName())->toBe('confirmDelete')
+        ->and($host->getMountedAction()?->getNestingIndex())->toBe(1)
+        ->and($host->getMountedAction(0)?->getName())->toBe('edit')
+        ->and($host->getMountedActions())->toHaveCount(2);
+});
+
+it('pops the pushed frame when a nested name is not a parent modal action', function (): void {
+    $host = $this->createLiveComponent('ActionHost')->component();
+    $host->mountAction('edit');
+
+    expect($host->mountAction('delete'))->toBeNull()
+        ->and($host->mountedActions)->toHaveCount(1)
+        ->and($host->mountedActions[0]['name'])->toBe('edit');
+});
+
+it('serves both an explicit index read and the top read from one warm stack', function (): void {
+    $host = $this->createLiveComponent('ActionHost')->component();
+    $host->mountAction('edit');
+    $host->mountAction('confirmDelete');
+
+    expect($host->getMountedAction(0)?->getName())->toBe('edit')
+        ->and($host->getMountedAction()?->getName())->toBe('confirmDelete');
+});
+
+it('re-resolves a prefix on a cold cache without losing the top frame', function (): void {
+    $host = new ActionHost();
+    $host->mountedActions = [
+        ['name' => 'edit', 'arguments' => [], 'context' => []],
+        ['name' => 'confirmDelete', 'arguments' => [], 'context' => []],
+    ];
+
+    // Cold cache: the index-0 read caches only the [edit] prefix (Filament's
+    // Arr::take behaviour), so the following top read must re-resolve the full stack.
+    expect($host->getMountedAction(0)?->getName())->toBe('edit')
+        ->and($host->getMountedAction()?->getName())->toBe('confirmDelete')
+        ->and($host->getMountedActions())->toHaveCount(2);
+});
+
+it('resolves a mounted action without a name to null instead of throwing', function (): void {
+    $host = new ActionHost();
+    $host->mountedActions = [['name' => '', 'arguments' => [], 'context' => []]];
+
+    expect($host->getMountedAction())->toBeNull();
+});
+
+it('merges frame arguments into the resolved action during resolution', function (): void {
+    $host = $this->createLiveComponent('ActionHost')->component();
+    $host->mountAction('edit', ['key' => 'value']);
+
+    expect($host->getMountedAction()?->getArguments())->toBe(['key' => 'value']);
+});
+
+it('pops one frame for cancelParentActions false and clears all for true', function (): void {
+    $host = $this->createLiveComponent('ActionHost')->component();
+    $host->mountAction('edit');
+    $host->mountAction('confirmDelete');
+
+    $host->unmountAction(false);
+
+    expect($host->mountedActions)->toHaveCount(1);
+
+    $host->mountAction('confirmDelete');
+    $host->unmountAction(true);
+
+    expect($host->mountedActions)->toBe([]);
+});
+
+it('cancels to a named parent and closes that parent too', function (): void {
+    $host = $this->createLiveComponent('ActionHost')->component();
+    $host->mountAction('edit');
+    $host->mountAction('deeper');
+    $host->mountAction('deepest');
+
+    $host->unmountAction('deeper');
+
+    expect($host->mountedActions)->toHaveCount(1)
+        ->and($host->mountedActions[0]['name'])->toBe('edit');
+});
+
+it('consults the mounted action for a null cancel argument', function (): void {
+    $host = $this->createLiveComponent('ActionHost')->component();
+    $host->mountAction('edit');
+    $host->mountAction('confirmDelete');
+    $host->getMountedAction()?->cancelParentActions(true);
+
+    $host->unmountAction();
+
+    expect($host->mountedActions)->toBe([]);
+});
+
+it('truncates the resolved cache alongside the stack', function (): void {
+    $host = $this->createLiveComponent('ActionHost')->component();
+    $host->mountAction('edit');
+    $host->mountAction('confirmDelete');
+    $host->getMountedActions();
+
+    $host->unmountAction(false);
+
+    expect($host->getMountedAction()?->getName())->toBe('edit')
+        ->and($host->getMountedActions())->toHaveCount(1);
+});
+
+it('merges call arguments into the top action and restores them afterwards', function (): void {
+    $host = $this->createLiveComponent('ActionHost')->component();
+    $host->mountAction('edit', ['a' => 1]);
+
+    $edit = $host->getMountedAction();
+
+    $host->callMountedAction(['b' => 2]);
+
+    expect($host->argumentsSeen)->toBe(['a' => 1, 'b' => 2])
+        ->and($edit?->getArguments())->toBe(['a' => 1]);
+});
+
+/*
+ * The above test alone cannot tell "merges into the top action" apart from the
+ * deleted `mergeArguments($this->mountedActions[0]['arguments'] ?? [])` bug: with
+ * a single frame, index 0 and the top are the same object. This variant pushes a
+ * second, argument-less frame on top of `edit` so the two are provably distinct —
+ * a regression of that exact line would leak edit's `a` into the child's arguments.
+ */
+it('merges call arguments into the top action specifically, not the root frame', function (): void {
+    $host = $this->createLiveComponent('ActionHost')->component();
+    $host->mountAction('edit', ['a' => 1]);
+    $host->mountAction('confirmDelete');
+
+    $edit = $host->getMountedAction(0);
+    $top = $host->getMountedAction();
+    $top?->action(function (array $arguments) use ($host): void {
+        $host->argumentsSeen = $arguments;
+    });
+
+    $host->callMountedAction(['b' => 2]);
+
+    expect($host->argumentsSeen)->toBe(['b' => 2])
+        ->and($top?->getArguments())->toBe([])
+        ->and($edit?->getArguments())->toBe(['a' => 1]);
+});
+
+/*
+ * Fix-wave regression: prepareModalAction() (CanOpenModal.php) propagates a
+ * parent's record onto a declared modal action that has none of its own —
+ * `if (! $action->hasRecord()) { $action->record($this->getRecord()); }` — the
+ * first time the parent's modal actions are resolved. callMountedAction() used
+ * to overwrite that unconditionally with getMountedActionRecord(), which is
+ * always null for a child frame (a child's Action::getContext() emits no
+ * recordKey), wiping the inherited record before the child's own closure saw it.
+ */
+it('keeps the record a child frame inherited from its parent when the child is called', function (): void {
+    $host = $this->createLiveComponent('ActionHost')->component();
+    $host->mountAction('edit');
+    $host->getAction('edit')?->record('ENTITY');
+    $host->mountAction('confirmDelete');
+
+    $recordSeen = null;
+    $host->getMountedAction()?->action(function (mixed $record) use (&$recordSeen): void {
+        $recordSeen = $record;
+    });
+
+    $host->callMountedAction();
+
+    expect($recordSeen)->toBe('ENTITY');
+});
+
+it('does not unmount when the stack was replaced mid-call', function (): void {
+    $host = $this->createLiveComponent('ActionHost')->component();
+    $host->mountAction('replacer');
+
+    expect($host->mountedActions)->toHaveCount(1)
+        ->and($host->mountedActions[0]['name'])->toBe('headed');
+});
+
+it('replaceMountedAction clears the whole stack before mounting', function (): void {
+    $host = $this->createLiveComponent('ActionHost')->component();
+    $host->mountAction('edit');
+    $host->mountAction('confirmDelete');
+
+    $host->replaceMountedAction('headed');
+
+    expect($host->mountedActions)->toHaveCount(1)
+        ->and($host->mountedActions[0]['name'])->toBe('headed')
+        ->and($host->getMountedAction()?->getNestingIndex())->toBe(0);
+});
+
+it('scopes modal ids to the host and nesting index, stable across reads', function (): void {
+    $host = $this->createLiveComponent('ActionHost')->component();
+    $host->mountAction('edit');
+    $host->mountAction('confirmDelete');
+
+    expect($host->getMountedModalId())->toMatch('/^sy-[0-9a-f]{8}-action-1$/')
+        ->and($host->getMountedModalId(0))->toMatch('/^sy-[0-9a-f]{8}-action-0$/')
+        ->and($host->getMountedModalId())->toBe($host->getMountedModalId())
+        ->and($host->actionsHostId)->not->toBeNull()
+        ->and($this->createLiveComponent('ActionHost')->component()->getActionsHostId())
+            ->not->toBe($host->getActionsHostId());
+});
+
+/*
+ * $actionsHostId is a #[LiveProp] with a same-named getter (getActionsHostId()) —
+ * the same shape that made getMountedActions() collide with $mountedActions in
+ * Task 1: PropertyAccessor::getValue() prefers a same-named getter over the raw
+ * property, so LiveComponentHydrator::dehydrate() calls getActionsHostId() rather
+ * than reading the property directly (harmless here, unlike Task 1's collision,
+ * since the getter returns the same string type dehydrate expects). This test
+ * exercises a real HTTP round trip through ->call() (dehydrate -> DOM -> next
+ * request -> hydrate) rather than calling methods directly on one in-memory
+ * object, so it would catch the id silently resetting between requests even
+ * though the two prior assertions could not.
+ */
+it('keeps actionsHostId stable across a real hydrate/dehydrate round trip', function (): void {
+    $component = $this->createLiveComponent('ActionHost')
+        ->call('mountAction', ['name' => 'delete', 'arguments' => [], 'context' => []]);
+
+    $firstId = $component->component()->getActionsHostId();
+
+    $component = $component->call('unmountAction');
+
+    expect($component->component()->getActionsHostId())->toBe($firstId);
+});
+
+it('opens only the top frame when the child does not overlay its parents', function (): void {
+    $host = $this->createLiveComponent('ActionHost')->component();
+    $host->mountAction('edit');
+    $host->mountAction('confirmDelete');
+
+    expect($host->isMountedActionModalOpen(0))->toBeFalse()
+        ->and($host->isMountedActionModalOpen(1))->toBeTrue();
+});
+
+it('keeps parents open under an overlaying child', function (): void {
+    $host = $this->createLiveComponent('ActionHost')->component();
+    $host->mountAction('edit');
+    $host->mountAction('overlayChild');
+
+    expect($host->isMountedActionModalOpen(0))->toBeTrue()
+        ->and($host->isMountedActionModalOpen(1))->toBeTrue();
+});
+
+/*
+ * A footer action with no modal heading opens no modal, so mountAction() routes it
+ * straight into callMountedAction() (HasActions.php:105-107); haltingChild's closure
+ * then throws Halt, which callMountedAction() catches and returns from without
+ * reaching unmountAction() — so the frame stays on the stack (the same halt-keeps-it-
+ * mounted contract HasActionsLifecycleTest pins). A frame with no modal covers
+ * nothing, so it must not hide its parent: the parent must stay open.
+ */
+it('keeps a parent open when a non-modal child halts on top of it', function (): void {
+    $host = $this->createLiveComponent('ActionHost')->component();
+    $host->mountAction('edit');
+    $host->mountAction('haltingChild');
+
+    expect($host->isMountedActionModalOpen(0))->toBeTrue()
+        ->and($host->isMountedActionModalOpen(1))->toBeFalse();
 });

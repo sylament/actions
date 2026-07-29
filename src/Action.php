@@ -4,8 +4,6 @@ declare(strict_types=1);
 
 namespace Sylament\Actions;
 
-use Sylament\Schemas\Schema;
-use Sylament\Schemas\Components\Component;
 use Closure;
 use Sylament\Actions\Concerns\BelongsToGroup;
 use Sylament\Actions\Concerns\BelongsToLiveComponent;
@@ -36,6 +34,8 @@ use Sylament\Actions\Concerns\HasSchema;
 use Sylament\Actions\Concerns\HasSize;
 use Sylament\Actions\Concerns\InteractsWithRecord;
 use Sylament\Actions\Enums\ActionStatus;
+use Sylament\Schemas\Components\Component;
+use Sylament\Schemas\Schema;
 use Sylament\Support\Components\Concerns\HasColor;
 use Sylament\Support\Components\Concerns\HasExtraAttributes;
 use Sylament\Support\Components\Concerns\HasIcon;
@@ -88,15 +88,15 @@ class Action extends ViewComponent
 
     protected string $evaluationIdentifier = 'action';
 
-    public const string BADGE_TEMPLATE = '@SylamentActions/components/badge-action.html.twig';
+    public const string BADGE_TEMPLATE = '@SylamentActions/partials/Action/Badge.html.twig';
 
-    public const string GROUPED_TEMPLATE = '@SylamentActions/components/grouped-action.html.twig';
+    public const string GROUPED_TEMPLATE = '@SylamentActions/partials/Action/Grouped.html.twig';
 
-    public const string BUTTON_TEMPLATE = '@SylamentActions/components/button-action.html.twig';
+    public const string BUTTON_TEMPLATE = '@SylamentActions/partials/Action/Button.html.twig';
 
-    public const string ICON_BUTTON_TEMPLATE = '@SylamentActions/components/icon-button-action.html.twig';
+    public const string ICON_BUTTON_TEMPLATE = '@SylamentActions/partials/Action/IconButton.html.twig';
 
-    public const string LINK_TEMPLATE = '@SylamentActions/components/link-action.html.twig';
+    public const string LINK_TEMPLATE = '@SylamentActions/partials/Action/Link.html.twig';
 
     protected string|Closure|null $defaultTemplate = self::BUTTON_TEMPLATE;
 
@@ -241,13 +241,6 @@ class Action extends ViewComponent
     {
         $context = [];
 
-        // A child frame resolves through the parent-modal descent, never through
-        // schema/table context, so this early return skips those for one. Not
-        // Filament-exact, though: Filament's early return sits after its recordKey
-        // block, so a Filament child frame still emits recordKey; this port's sits
-        // before any assignment, so a child frame here emits nothing — recordKey
-        // emission has not been ported to this class yet (HasActions only consumes
-        // an inbound context.recordKey today).
         if ($this->parentAction instanceof self) {
             return $context;
         }
@@ -268,8 +261,8 @@ class Action extends ViewComponent
             'liveComponent' => ClosureParameter::make($this->getLiveComponent()),
             'schema' => ClosureParameter::make($this->getSchemaContainer()),
             'schemaComponent', 'component' => ClosureParameter::make($this->getSchemaComponent()),
-            'schemaGet', 'get' => ClosureParameter::make($this->getSchemaComponent()->makeGetUtility()->skipComponentsChildContainersWhileSearching(false)), // @phpstan-ignore method.nonObject (Filament-faithful: fatals without a schema component)
-            'schemaSet', 'set' => ClosureParameter::make($this->getSchemaComponent()->makeSetUtility()->skipComponentsChildContainersWhileSearching(false)), // @phpstan-ignore method.nonObject (Filament-faithful: fatals without a schema component)
+            'schemaGet', 'get' => ClosureParameter::make($this->getSchemaComponentOrFail()->makeGetUtility()->skipComponentsChildContainersWhileSearching(false)),
+            'schemaSet', 'set' => ClosureParameter::make($this->getSchemaComponentOrFail()->makeSetUtility()->skipComponentsChildContainersWhileSearching(false)),
             'schemaComponentState', 'state' => ClosureParameter::make($this->getSchemaComponentState()),
             'schemaState' => ClosureParameter::make($this->getSchemaState()),
             default => parent::resolveDefaultClosureDependencyForEvaluationByName($parameterName),
@@ -297,7 +290,10 @@ class Action extends ViewComponent
         return $this->getSchemaComponent()?->getState();
     }
 
-    public function getSchemaState(): mixed
+    /**
+     * @return array<string, mixed>|null
+     */
+    public function getSchemaState(): ?array
     {
         $schemaContainer = $this->getSchemaContainer();
 

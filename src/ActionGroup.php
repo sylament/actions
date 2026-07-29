@@ -4,8 +4,6 @@ declare(strict_types=1);
 
 namespace Sylament\Actions;
 
-use Sylament\Schemas\Schema;
-use Sylament\Schemas\Components\Component;
 use Closure;
 use Sylament\Actions\Concerns\BelongsToGroup;
 use Sylament\Actions\Concerns\BelongsToLiveComponent;
@@ -18,6 +16,8 @@ use Sylament\Actions\Concerns\HasLabel;
 use Sylament\Actions\Concerns\HasSize;
 use Sylament\Actions\Concerns\InteractsWithRecord;
 use Sylament\Actions\Contracts\InteractsWithActions;
+use Sylament\Schemas\Components\Component;
+use Sylament\Schemas\Schema;
 use Sylament\Support\Components\Concerns\HasColor;
 use Sylament\Support\Components\Concerns\HasExtraAttributes;
 use Sylament\Support\Components\Concerns\HasIcon;
@@ -50,15 +50,15 @@ class ActionGroup extends ViewComponent
 
     public const string DEFAULT_ICON = 'heroicons:ellipsis-vertical';
 
-    public const string ICON_BUTTON_TEMPLATE = '@SylamentActions/components/action-group/icon-button-trigger.html.twig';
+    public const string ICON_BUTTON_TEMPLATE = '@SylamentActions/partials/ActionGroup/IconButtonTrigger.html.twig';
 
-    public const string BUTTON_TEMPLATE = '@SylamentActions/components/action-group/button-trigger.html.twig';
+    public const string BUTTON_TEMPLATE = '@SylamentActions/partials/ActionGroup/ButtonTrigger.html.twig';
 
-    public const string GROUPED_TEMPLATE = '@SylamentActions/components/action-group/grouped-trigger.html.twig';
+    public const string GROUPED_TEMPLATE = '@SylamentActions/partials/ActionGroup/GroupedTrigger.html.twig';
 
     protected string $evaluationIdentifier = 'group';
 
-    protected string|Closure|null $template = '@SylamentActions/components/action-group.html.twig';
+    protected string|Closure|null $template = '@SylamentActions/partials/ActionGroup/index.html.twig';
 
     /**
      * @var array<Action|ActionGroup>
@@ -159,12 +159,6 @@ class ActionGroup extends ViewComponent
     }
 
     /**
-     * Dropdown rendering plan, Filament's toEmbeddedHtml() loop: runs of visible
-     * plain actions (and dropdown-enabled subgroups, which embed as submenus)
-     * share a section; a non-dropdown subgroup never renders its own trigger —
-     * its visible children splice in as a fresh section, flushing any
-     * accumulated run into its own section first.
-     *
      * @return array<array<Action|ActionGroup>>
      */
     public function getDropdownActionLists(): array
@@ -183,19 +177,9 @@ class ActionGroup extends ViewComponent
                     $singleActions = [];
                 }
 
-                // Re-stamp as grouped: the child's own getActions() stamped from its
-                // hasDropdown() (false — that is why it flattens), which would render
-                // standalone buttons inside this dropdown panel. These children are
-                // being spliced into THIS group's panel, so they are dropdown items.
-                // Last write wins on the *default*, so an explicit template() or
-                // triggerTemplate() on a child still overrides both.
-                $actionLists[] = $this->stampTriggerTemplates(
-                    array_values(array_filter(
-                        $action->getActions(),
-                        fn (Action|ActionGroup $childAction): bool => $childAction->isVisible(),
-                    )),
-                    true,
-                );
+                $actionLists[] = array_filter($action->getActions(), static fn (Action|ActionGroup $childAction): bool => $childAction->isVisible())
+                        |> array_values(...)
+                        |> (fn (array $x): array => $this->stampTriggerTemplates($x, true, ));
             } else {
                 $singleActions[] = $action;
             }
@@ -328,7 +312,7 @@ class ActionGroup extends ViewComponent
             'liveComponent' => ClosureParameter::make($this->getLiveComponent()),
             'schema' => ClosureParameter::make($this->getSchemaContainer()),
             'schemaComponent', 'component' => ClosureParameter::make($this->getSchemaComponent()),
-            'schemaGet', 'get' => ClosureParameter::make($this->getSchemaComponent()->makeGetUtility()), // @phpstan-ignore method.nonObject (Filament-faithful: fatals without a schema component)
+            'schemaGet', 'get' => ClosureParameter::make($this->getSchemaComponentOrFail()->makeGetUtility()),
             'schemaComponentState', 'state' => ClosureParameter::make($this->getSchemaComponentState()),
             'schemaState' => ClosureParameter::make($this->getSchemaState()),
             default => parent::resolveDefaultClosureDependencyForEvaluationByName($parameterName),
@@ -356,7 +340,10 @@ class ActionGroup extends ViewComponent
         return $this->getSchemaComponent()?->getState();
     }
 
-    public function getSchemaState(): mixed
+    /**
+     * @return array<string, mixed>|null
+     */
+    public function getSchemaState(): ?array
     {
         $schemaContainer = $this->getSchemaContainer();
 

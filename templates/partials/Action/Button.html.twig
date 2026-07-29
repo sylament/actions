@@ -1,0 +1,54 @@
+{% set hasLiveClickBinding = not component.getUrl and not component.canSubmitForm %}
+{% set clickParameters = null %}
+{% set closeAttributes = {} %}
+{%- if not component.getUrl -%}
+    {%- if hasLiveClickBinding and component.getClientClickHandler -%}
+        {%- set clickParameters = {action: component.getClientClickHandler} -%}
+    {%- elseif hasLiveClickBinding and component.getParentActionCallLiveComponentClickHandler -%}
+        {%- set clickParameters = {
+            action: component.getParentActionCallLiveComponentClickHandler,
+            ...(component.getArguments ? {arguments: component.getArguments} : {}),
+        } -%}
+    {%- elseif component.shouldClose -%}
+        {%- set closeAttributes = {'data-action': 'sylament--support--modal#dismiss'} -%}
+    {%- elseif hasLiveClickBinding -%}
+        {%- set clickParameters = {
+            action: 'mountAction',
+            name: component.getName,
+            ...(component.getInvokedArguments ? {arguments: component.getInvokedArguments} : {}),
+            ...(component.getContext ? {context: component.getContext} : {}),
+        } -%}
+    {%- endif -%}
+{%- endif -%}
+
+{% set mountAttributes = clickParameters is null
+    ? {}
+    : stimulus_action('live', 'action', parameters: clickParameters) %}
+
+{% set extraAttributes = component.getExtraAttributeBag.toScalarAttributes %}
+{% set rootClasses = classes('sy-ac', {'sy-outlined': component.isOutlined}, extraAttributes.class ?? null) %}
+{% set extraAttributes = extraAttributes|filter((value, name) => name != 'class') %}
+
+<twig:SylamentSupport:Button
+    :class="rootClasses"
+    :icon="component.getIcon"
+    :iconSize="component.getIconSize"
+    :iconPosition="component.getIconPosition"
+    :color="component.getColor"
+    :size="component.getSize ?? 'md'"
+    :disabled="component.isDisabled"
+    :tag="component.getUrl ? 'a' : 'button'"
+    :href="component.getUrl"
+    :target="component.shouldOpenUrlInNewTab ? '_blank' : null"
+    :type="component.canSubmitForm ? 'submit' : 'button'"
+    :formId="component.getFormId"
+    {{ ...(component.getTooltip ? {title: component.getTooltip} : {}) }}
+    {{ ...(component.isLabelHidden ? {'aria-label': (component.getLabel ?? component.getName)|striptags|trim} : {}) }}
+    {{ ...extraAttributes }}
+    {{ ...mountAttributes }}
+    {{ ...closeAttributes }}
+>
+    {%- if not component.isLabelHidden -%}
+        {{ component.getLabel ?? component.getName }}
+    {%- endif -%}
+</twig:SylamentSupport:Button>

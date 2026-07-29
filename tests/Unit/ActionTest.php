@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Sylament\Actions\Tests\Unit;
 
-use Error;
 use LogicException;
 use Sylament\Actions\Action;
 use Sylament\Actions\Enums\ActionStatus;
@@ -13,10 +12,10 @@ use Sylament\Actions\Tests\Fixtures\DefaultNamedActionFixture;
 use Sylament\Actions\Tests\Fixtures\StateFieldFixture;
 use Sylament\Schemas\Components\Component;
 use Sylament\Schemas\Components\Section;
-use Sylament\Schemas\Components\StateCasts\BooleanStateCast;
-use Sylament\Schemas\Components\Utilities\Get;
-use Sylament\Schemas\Components\Utilities\Set;
 use Sylament\Schemas\Schema;
+use Sylament\Schemas\State\Casts\BooleanStateCast;
+use Sylament\Schemas\State\Get;
+use Sylament\Schemas\State\Set;
 use Sylament\Support\Exceptions\Cancel;
 use Sylament\Support\Exceptions\Halt;
 
@@ -223,9 +222,9 @@ it('injects $data from getData()', function (): void {
     expect($action->evaluate(fn ($data): array => $data))->toBe(['title' => 'Ada']);
 });
 
-it('fatals when $get is requested without a schema component, as in Filament', function (): void {
+it('throws a named exception when $get is requested without a schema component', function (): void {
     expect(fn (): mixed => Action::make('save')->evaluate(fn (Get $get): mixed => $get('title')))
-        ->toThrow(Error::class);
+        ->toThrow(LogicException::class, 'has no schema component');
 });
 
 it('defaults to the button view', function (): void {

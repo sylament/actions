@@ -4,13 +4,13 @@ declare(strict_types=1);
 
 namespace Sylament\Actions\Tests\Unit;
 
-use Sylament\Actions\Tests\Fixtures\Twig\Components\ActionHost;
-use stdClass;
 use LogicException;
+use stdClass;
 use Sylament\Actions\Action;
 use Sylament\Actions\ActionGroup;
 use Sylament\Actions\Tests\Fixtures\Concerns\BothContractsHostFixture;
 use Sylament\Actions\Tests\Fixtures\StateFieldFixture;
+use Sylament\Actions\Tests\Fixtures\Twig\Components\ActionHost;
 use Sylament\Schemas\Components\Section;
 use Sylament\Schemas\Schema;
 use Sylament\Support\Twig\ComponentAttributeBag;
@@ -161,7 +161,7 @@ it('keeps the normal action template under dropdown(false)', function (): void {
     $edit = Action::make('edit');
     ActionGroup::make([$edit])->dropdown(false)->getActions();
 
-    expect($edit->getTemplate())->toBe('@SylamentActions/components/button-action.html.twig');
+    expect($edit->getTemplate())->toBe('@SylamentActions/partials/Action/Button.html.twig');
 });
 
 it('never clobbers an explicit action template', function (): void {

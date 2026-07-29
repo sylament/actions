@@ -1,0 +1,13 @@
+{% set liveComponent = this.getLiveComponent() %}
+
+{% for action in liveComponent.getMountedActions %}
+    {% if not loop.last or liveComponent.mountedActionShouldOpenModal(action) %}
+        <twig:SylamentActions:ActionModal
+            :action="action"
+            :id="liveComponent.getMountedModalId(action.getNestingIndex)"
+            :open="liveComponent.isMountedActionModalOpen(action.getNestingIndex)"
+            :overlaid="not loop.last"
+            :schema="liveComponent.mountedActionHasSchema(action) ? liveComponent.getMountedActionSchema(action.getNestingIndex, action) : null"
+        />
+    {% endif %}
+{% endfor %}

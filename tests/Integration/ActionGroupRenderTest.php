@@ -35,7 +35,7 @@ it('feeds dropdown configuration into the primitive', function (): void {
 
     expect($html)->toContain('data-sylament--support--dropdown-placement-value="top-end"')
         ->toContain('data-sylament--support--dropdown-offset-value="4"')
-        ->toContain('--sy-dropdown-width: 16rem;');
+        ->toContain('--sy-dropdown-width: 16rem');
 });
 
 it('skips hidden items', function (): void {
@@ -49,7 +49,7 @@ it('renders an inline row under dropdown(false)', function (): void {
     $html = renderGroup(ActionGroup::make([Action::make('edit')])->dropdown(false));
 
     expect($html)->toContain('sy-ac-group')
-        ->toContain('sy sy-btn sy-ac')
+        ->toContain('sy sy-btn sy-size-md sy-color sy-color-primary sy-ac')
         ->not->toContain('sy-dropdown-panel');
 });
 

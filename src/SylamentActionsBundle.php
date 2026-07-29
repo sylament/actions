@@ -4,13 +4,10 @@ declare(strict_types=1);
 
 namespace Sylament\Actions;
 
-use Sylament\Actions\Twig\Components\Modals;
 use Sylament\Actions\Twig\Extension\ActionExtension;
 use Sylament\Support\SylamentBundle;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\Loader\Configurator\ContainerConfigurator;
-
-use function Symfony\Component\DependencyInjection\Loader\Configurator\service;
 
 class SylamentActionsBundle extends SylamentBundle
 {
@@ -19,23 +16,26 @@ class SylamentActionsBundle extends SylamentBundle
      */
     public function loadExtension(array $config, ContainerConfigurator $configurator, ContainerBuilder $container): void
     {
+        $this->configureComponents($configurator);
         $this->configureTwigComponents($configurator);
         $this->configureTwigExtensions($configurator);
     }
 
-    /**
-     * Registers the shipped Twig components. `autoconfigure()` lets `#[AsTwigComponent]`
-     * supply the `twig.component` tag, so the attribute stays the single source of truth
-     * for the component's name and template. The component stack has no class alias, so it
-     * is referenced by service id.
-     */
+    private function configureComponents(ContainerConfigurator $configurator): void
+    {
+        $configurator->services()
+            ->defaults()
+                ->autowire()
+                ->autoconfigure()
+            ->set(Action::class)
+            ->set(ActionGroup::class);
+    }
+
     private function configureTwigComponents(ContainerConfigurator $configurator): void
     {
         $configurator->services()
-            ->set('sylament_actions.twig_component.modals', Modals::class)
-            ->args([
-                '$componentStack' => service('ux.twig_component.component_stack'),
-            ])
+            ->load(__NAMESPACE__ . '\\Twig\\Components\\', __DIR__ . '/Twig/Components/')
+            ->autowire()
             ->autoconfigure();
     }
 
@@ -43,9 +43,7 @@ class SylamentActionsBundle extends SylamentBundle
     {
         $configurator->services()
             ->set('sylament_actions.action_extension', ActionExtension::class)
-            ->args([
-                '$componentExtension' => service('sylament_support.component_extension'),
-            ])
+            ->autowire()
             ->tag('twig.extension');
     }
 }

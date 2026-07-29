@@ -1,0 +1,48 @@
+{% set clickWiringSuppressed = component.getUrl or component.isDisabled %}
+{% set closeAttributes = component.shouldClose
+    and not component.getClientClickHandler
+    and not component.getParentActionCallLiveComponentClickHandler
+    and not clickWiringSuppressed
+    ? {'data-action': 'sylament--support--modal#dismiss'}
+    : {} %}
+{% set clickParameters = component.getClientClickHandler
+    ? {action: component.getClientClickHandler}
+    : (component.getParentActionCallLiveComponentClickHandler
+        ? {
+            action: component.getParentActionCallLiveComponentClickHandler,
+            ...(component.getArguments ? {arguments: component.getArguments} : {}),
+        }
+        : (component.shouldClose
+            ? null
+            : {
+                action: 'mountAction',
+                name: component.getName,
+                ...(component.getInvokedArguments ? {arguments: component.getInvokedArguments} : {}),
+                ...(component.getContext ? {context: component.getContext} : {}),
+            })) %}
+{% set mountAttributes = clickWiringSuppressed or component.canSubmitForm or clickParameters is null
+    ? {}
+    : stimulus_action('live', 'action', parameters: clickParameters) %}
+
+{% set extraAttributes = component.getExtraAttributeBag.toScalarAttributes %}
+{% set rootClasses = classes('sy-ac', extraAttributes.class ?? null) %}
+{% set extraAttributes = extraAttributes|filter((value, name) => name != 'class') %}
+
+<twig:SylamentSupport:IconButton
+    :class="rootClasses"
+    :icon="component.getIcon"
+    :iconSize="component.getIconSize"
+    :label="component.getLabel ?? component.getName"
+    :color="component.getColor"
+    :size="component.getSize ?? 'md'"
+    :disabled="component.isDisabled"
+    :tag="component.getUrl ? 'a' : 'button'"
+    :href="component.getUrl"
+    :target="component.shouldOpenUrlInNewTab ? '_blank' : null"
+    :type="component.canSubmitForm ? 'submit' : 'button'"
+    :formId="component.getFormId"
+    {{ ...(component.getTooltip ? {title: component.getTooltip} : {}) }}
+    {{ ...extraAttributes }}
+    {{ ...mountAttributes }}
+    {{ ...closeAttributes }}
+/>

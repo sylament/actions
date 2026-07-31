@@ -26,7 +26,7 @@
     : stimulus_action('live', 'action', parameters: clickParameters) %}
 
 {% set extraAttributes = component.getExtraAttributeBag.toScalarAttributes %}
-{% set rootClasses = classes('sy-ac', {'sy-outlined': component.isOutlined}, extraAttributes.class ?? null) %}
+{% set rootClasses = classes('sy-ac', extraAttributes.class ?? null) %}
 {% set extraAttributes = extraAttributes|filter((value, name) => name != 'class') %}
 
 <twig:SylamentSupport:Button
@@ -35,6 +35,7 @@
     :iconSize="component.getIconSize"
     :iconPosition="component.getIconPosition"
     :color="component.getColor"
+    :outlined="component.isOutlined"
     :size="component.getSize ?? 'md'"
     :disabled="component.isDisabled"
     :tag="component.getUrl ? 'a' : 'button'"

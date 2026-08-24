@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Sylament\Actions\Tests\Unit;
 
+use Doctrine\ORM\QueryBuilder;
 use LogicException;
 use Sylament\Actions\Action;
 use Sylament\Actions\Enums\ActionStatus;
@@ -110,6 +111,46 @@ it('throws Cancel from cancel() and Halt from halt()', function (): void {
     expect(fn () => Action::make('delete')->halt())->toThrow(Halt::class);
 });
 
+it('defaults the thrown Cancel and Halt to committing the database transaction', function (): void {
+    $cancel = null;
+    $halt = null;
+
+    try {
+        Action::make('delete')->cancel();
+    } catch (Cancel $exception) {
+        $cancel = $exception;
+    }
+
+    try {
+        Action::make('delete')->halt();
+    } catch (Halt $exception) {
+        $halt = $exception;
+    }
+
+    expect($cancel?->shouldRollbackDatabaseTransaction())->toBeFalse()
+        ->and($halt?->shouldRollbackDatabaseTransaction())->toBeFalse();
+});
+
+it('flags the thrown Cancel and Halt for rollback when asked', function (): void {
+    $cancel = null;
+    $halt = null;
+
+    try {
+        Action::make('delete')->cancel(true);
+    } catch (Cancel $exception) {
+        $cancel = $exception;
+    }
+
+    try {
+        Action::make('delete')->halt(true);
+    } catch (Halt $exception) {
+        $halt = $exception;
+    }
+
+    expect($cancel?->shouldRollbackDatabaseTransaction())->toBeTrue()
+        ->and($halt?->shouldRollbackDatabaseTransaction())->toBeTrue();
+});
+
 it('returns an empty context without a schema binding', function (): void {
     expect(Action::make('save')->getContext())->toBe([]);
 });
@@ -165,6 +206,17 @@ it('keeps only recordKey on a nested frame', function (): void {
         ->parentAction(Action::make('parent'));
 
     expect($action->getContext())->toBe(['recordKey' => '7']);
+});
+
+it('carries no bulk flag by default and takes one from bulk()', function (): void {
+    expect(Action::make('delete')->isBulk())->toBeFalse()
+        ->and(Action::make('delete')->bulk()->isBulk())->toBeTrue()
+        ->and(Action::make('delete')->bulk(false)->isBulk())->toBeFalse()
+        ->and(Action::make('delete')->bulk(fn (): bool => true)->isBulk())->toBeTrue();
+});
+
+it('emits no bulk context key for a bulk action with no table', function (): void {
+    expect(Action::make('delete')->bulk()->getContext())->toBe([]);
 });
 
 it('clones an action independently of the original', function (): void {
@@ -404,4 +456,36 @@ it('falls through to the container walk when the item argument is blank', functi
 
     expect($action?->arguments(['item' => ''])->evaluate(fn ($schemaState): mixed => $schemaState))
         ->toBe(['rows' => []]);
+});
+
+/*
+ * The four selected-record injection arms are gated on `hasCanAccessSelectedRecords()`,
+ * not on the evaluated flag: an ordinary action naming a `$records` or
+ * `$recordsQuery` parameter — or type-hinting a `QueryBuilder` — must fall
+ * through to the parent resolution rather than throw the access gate at a
+ * caller who never asked for a selection.
+ */
+it('leaves a $records parameter to the parent resolution on an action that accesses no selected records', function (): void {
+    expect(Action::make('archive')->evaluate(fn (array $records = ['fallback']): array => $records))
+        ->toBe(['fallback']);
+});
+
+it('leaves a $recordsQuery parameter to the parent resolution on an action that accesses no selected records', function (): void {
+    expect(Action::make('archive')->evaluate(fn (?QueryBuilder $recordsQuery = null): ?QueryBuilder => $recordsQuery))
+        ->toBeNull();
+});
+
+it('leaves a QueryBuilder-typed parameter to the parent resolution on an action that accesses no selected records', function (): void {
+    expect(Action::make('archive')->evaluate(fn (?QueryBuilder $selection = null): ?QueryBuilder => $selection))
+        ->toBeNull();
+});
+
+/*
+ * The `call()` finally reaches its host through the nullable accessor, so a
+ * detached action carrying the deselect flag runs its closure and returns
+ * instead of fataling on a host that is not there.
+ */
+it('runs a detached action that deselects after completion without reaching for a host', function (): void {
+    expect(Action::make('archive')->deselectRecordsAfterCompletion()->action(fn (): string => 'ran')->call())
+        ->toBe('ran');
 });

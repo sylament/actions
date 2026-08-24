@@ -6,6 +6,7 @@ namespace Sylament\Actions;
 
 use BackedEnum;
 use Closure;
+use Doctrine\ORM\QueryBuilder;
 use Sylament\Actions\Concerns\BelongsToGroup;
 use Sylament\Actions\Concerns\BelongsToLiveComponent;
 use Sylament\Actions\Concerns\BelongsToSchemaComponent;
@@ -17,12 +18,16 @@ use Sylament\Actions\Concerns\CanBeMounted;
 use Sylament\Actions\Concerns\CanBeOutlined;
 use Sylament\Actions\Concerns\CanCallParentAction;
 use Sylament\Actions\Concerns\CanClose;
+use Sylament\Actions\Concerns\CanDeselectRecordsAfterCompletion;
 use Sylament\Actions\Concerns\CanDispatchEvent;
+use Sylament\Actions\Concerns\CanFetchSelectedRecords;
 use Sylament\Actions\Concerns\CanNotify;
 use Sylament\Actions\Concerns\CanOpenModal;
 use Sylament\Actions\Concerns\CanOpenUrl;
+use Sylament\Actions\Concerns\CanRedirect;
 use Sylament\Actions\Concerns\CanRequireConfirmation;
 use Sylament\Actions\Concerns\CanSubmitForm;
+use Sylament\Actions\Concerns\CanUseDatabaseTransactions;
 use Sylament\Actions\Concerns\HasAction;
 use Sylament\Actions\Concerns\HasArguments;
 use Sylament\Actions\Concerns\HasData;
@@ -38,6 +43,7 @@ use Sylament\Actions\Concerns\HasSchema;
 use Sylament\Actions\Concerns\HasSize;
 use Sylament\Actions\Concerns\HasWizard;
 use Sylament\Actions\Concerns\InteractsWithRecord;
+use Sylament\Actions\Concerns\InteractsWithSelectedRecords;
 use Sylament\Actions\Enums\ActionStatus;
 use Sylament\Schemas\Components\Component;
 use Sylament\Schemas\Components\Concerns\CanAccessProperties;
@@ -59,6 +65,7 @@ use Sylament\Support\Enums\Size;
 use Sylament\Support\Evaluation\ClosureParameter;
 use Sylament\Support\Exceptions\Cancel;
 use Sylament\Support\Exceptions\Halt;
+use Sylament\Tables\Contracts\InteractsWithTable;
 use Twig\Markup;
 
 use function Sylament\Support\filled;
@@ -77,12 +84,16 @@ class Action extends ViewComponent
     use CanBeOutlined;
     use CanCallParentAction;
     use CanClose;
+    use CanDeselectRecordsAfterCompletion;
     use CanDispatchEvent;
+    use CanFetchSelectedRecords;
     use CanNotify;
     use CanOpenModal;
     use CanOpenUrl;
+    use CanRedirect;
     use CanRequireConfirmation;
     use CanSubmitForm;
+    use CanUseDatabaseTransactions;
     use HasAction;
     use HasArguments;
     use HasColor;
@@ -104,6 +115,7 @@ class Action extends ViewComponent
     use HasTooltip;
     use HasWizard;
     use InteractsWithRecord;
+    use InteractsWithSelectedRecords;
 
     protected string $evaluationIdentifier = 'action';
 
@@ -118,6 +130,8 @@ class Action extends ViewComponent
     public const string LINK_TEMPLATE = '@SylamentActions/partials/Action/Link.html.twig';
 
     protected string|Closure|null $defaultTemplate = self::BUTTON_TEMPLATE;
+
+    protected bool|Closure $isBulk = false;
 
     protected ?ActionStatus $status = null;
 
@@ -315,17 +329,35 @@ class Action extends ViewComponent
      */
     public function call(array $parameters = []): mixed
     {
-        return $this->evaluate($this->getAction(), $parameters);
+        try {
+            return $this->evaluate($this->getAction(), $parameters);
+        } finally {
+            if ($this->shouldDeselectRecordsAfterCompletion() && ($host = $this->getLiveComponentOrNull()) instanceof InteractsWithTable) {
+                $host->deselectAllTableRecords();
+            }
+        }
     }
 
-    public function cancel(): void
+    public function cancel(bool $shouldRollBackDatabaseTransaction = false): void
     {
-        throw new Cancel();
+        throw new Cancel()->rollBackDatabaseTransaction($shouldRollBackDatabaseTransaction);
     }
 
-    public function halt(): void
+    public function halt(bool $shouldRollBackDatabaseTransaction = false): void
     {
-        throw new Halt();
+        throw new Halt()->rollBackDatabaseTransaction($shouldRollBackDatabaseTransaction);
+    }
+
+    public function bulk(bool|Closure $condition = true): static
+    {
+        $this->isBulk = $condition;
+
+        return $this;
+    }
+
+    public function isBulk(): bool
+    {
+        return (bool) $this->evaluate($this->isBulk);
     }
 
     public function success(): void
@@ -340,7 +372,19 @@ class Action extends ViewComponent
 
     public function getStatus(): ActionStatus
     {
-        return $this->status ?? ActionStatus::Success;
+        if ($this->status instanceof ActionStatus) {
+            return $this->status;
+        }
+
+        if (! $this->canAccessSelectedRecords()) {
+            return ActionStatus::Success;
+        }
+
+        if ($this->successfulSelectedRecordsCount === $this->totalSelectedRecordsCount) {
+            return ActionStatus::Success;
+        }
+
+        return ActionStatus::Failure;
     }
 
     public function nestingIndex(?int $index): static
@@ -391,6 +435,10 @@ class Action extends ViewComponent
             $context['table'] = true;
         }
 
+        if ($this->hasTable() && $this->isBulk()) {
+            $context['bulk'] = true;
+        }
+
         if (filled($schemaComponentKey = ($this->getSchemaContainer() ?? $this->getSchemaComponent())?->getKey())) {
             $context['schemaComponent'] = $schemaComponentKey;
         }
@@ -410,6 +458,12 @@ class Action extends ViewComponent
             'arguments' => ClosureParameter::make($this->getArguments()),
             'data' => ClosureParameter::make($this->getData()),
             'liveComponent' => ClosureParameter::make($this->getLiveComponent()),
+            'records', 'selectedRecords' => $this->hasCanAccessSelectedRecords()
+                ? ClosureParameter::make($this->getSelectedRecords())
+                : parent::resolveDefaultClosureDependencyForEvaluationByName($parameterName),
+            'recordsQuery', 'selectedRecordsQuery' => $this->hasCanAccessSelectedRecords()
+                ? ClosureParameter::make($this->getSelectedRecordsQuery())
+                : parent::resolveDefaultClosureDependencyForEvaluationByName($parameterName),
             'schema' => ClosureParameter::make($this->getSchemaContainer()),
             'schemaComponent', 'component' => ClosureParameter::make($this->getSchemaComponent()),
             'schemaGet', 'get' => ClosureParameter::make($this->getSchemaComponentOrFail()->makeGetUtility()->skipComponentsChildContainersWhileSearching(false)),
@@ -423,6 +477,9 @@ class Action extends ViewComponent
     protected function resolveDefaultClosureDependencyForEvaluationByType(string $parameterType): ?ClosureParameter
     {
         return match ($parameterType) {
+            QueryBuilder::class => $this->hasCanAccessSelectedRecords()
+                ? ClosureParameter::make($this->getSelectedRecordsQuery())
+                : parent::resolveDefaultClosureDependencyForEvaluationByType($parameterType),
             Get::class => ClosureParameter::make($this->getSchemaComponentOrFail()->makeGetUtility()->skipComponentsChildContainersWhileSearching(false)),
             Set::class => ClosureParameter::make($this->getSchemaComponentOrFail()->makeSetUtility()->skipComponentsChildContainersWhileSearching(false)),
             default => parent::resolveDefaultClosureDependencyForEvaluationByType($parameterType),

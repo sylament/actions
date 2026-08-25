@@ -335,7 +335,33 @@ class ActionGroup extends ViewComponent
 
     public function getRecord(): mixed
     {
-        return $this->evaluate($this->record) ?? $this->getGroup()?->getRecord();
+        $record = $this->evaluate($this->record);
+
+        if (is_object($record) || filled($record)) {
+            return $this->ensureCorrectRecordType($record);
+        }
+
+        return $this->ensureCorrectRecordType($this->getGroup()?->getRecord());
+    }
+
+    /**
+     * @return class-string|null
+     */
+    public function getRecordClass(): ?string
+    {
+        $class = $this->getCustomRecordClass();
+
+        if ($class !== null) {
+            return $class;
+        }
+
+        $record = $this->getRecord();
+
+        if (is_object($record)) {
+            return $record::class;
+        }
+
+        return $this->getGroup()?->getRecordClass();
     }
 
     public function getLabel(): string|Markup|null
@@ -467,6 +493,7 @@ class ActionGroup extends ViewComponent
     {
         return match ($parameterName) {
             'record' => ClosureParameter::make($this->getRecord()),
+            'recordClass' => ClosureParameter::make($this->getRecordClass()),
             'liveComponent' => ClosureParameter::make($this->getLiveComponent()),
             'schema' => ClosureParameter::make($this->getSchemaContainer()),
             'schemaComponent', 'component' => ClosureParameter::make($this->getSchemaComponent()),

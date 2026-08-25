@@ -4,16 +4,22 @@ declare(strict_types=1);
 
 namespace Sylament\Actions\Tests\Unit;
 
+use ArrayObject;
+use DateTimeImmutable;
 use Doctrine\ORM\QueryBuilder;
 use LogicException;
+use stdClass;
 use Sylament\Actions\Action;
+use Sylament\Actions\ActionGroup;
 use Sylament\Actions\Enums\ActionStatus;
 use Sylament\Actions\Tests\Fixtures\Components\ItemActionsContainer;
 use Sylament\Actions\Tests\Fixtures\Concerns\BothContractsHostFixture;
 use Sylament\Actions\Tests\Fixtures\DefaultNamedActionFixture;
 use Sylament\Actions\Tests\Fixtures\StateFieldFixture;
+use Sylament\Actions\Tests\Fixtures\Twig\Components\DefaultRecordHost;
 use Sylament\Schemas\Components\Component;
 use Sylament\Schemas\Components\Section;
+use Sylament\Schemas\Components\Text;
 use Sylament\Schemas\Schema;
 use Sylament\Schemas\State\Casts\BooleanStateCast;
 use Sylament\Schemas\State\Get;
@@ -488,4 +494,74 @@ it('leaves a QueryBuilder-typed parameter to the parent resolution on an action 
 it('runs a detached action that deselects after completion without reaching for a host', function (): void {
     expect(Action::make('archive')->deselectRecordsAfterCompletion()->action(fn (): string => 'ran')->call())
         ->toBe('ran');
+});
+
+it('walks the record chain to its schema container and component before the host', function (): void {
+    $schema = Schema::make()->record($record = new stdClass());
+    $action = Action::make('x')->schemaContainer($schema);
+
+    expect($action->getRecord())->toBe($record)
+        ->and($action->getRecordClass())->toBe(stdClass::class);
+});
+
+it('injects the record class into a closure as recordClass', function (): void {
+    $action = Action::make('x')->recordClass(stdClass::class);
+
+    expect($action->evaluate(fn (string $recordClass): string => $recordClass))->toBe(stdClass::class);
+});
+
+it('keeps a host-default record out of its context', function (): void {
+    $host = new DefaultRecordHost();
+    $action = Action::make('x')->liveComponent($host);
+
+    expect($action->getRecord())->toBe($host->record)
+        ->and($action->getContext())->not->toHaveKey('recordKey');
+});
+
+it('clears its record after the run only when it says so', function (): void {
+    $action = Action::make('x')->record($record = new stdClass());
+
+    $action->clearRecordAfter();
+
+    expect($action->getRecord())->toBe($record)
+        ->and($action->shouldClearRecordAfter())->toBeFalse();
+});
+
+it('stops at its own record when the record class does not match, rather than walking on', function (): void {
+    $action = Action::make('x')->record(new stdClass())->recordClass(DateTimeImmutable::class);
+
+    ActionGroup::make([$action])->record(new DateTimeImmutable());
+
+    expect($action->getRecord())->toBeNull();
+});
+
+it('walks the record chain to its schema component', function (): void {
+    $action = Action::make('x')->schemaComponent(Text::make('t')->record($record = new stdClass()));
+
+    expect($action->getRecord())->toBe($record)
+        ->and($action->getRecordClass())->toBe(stdClass::class);
+});
+
+it('derives the record label from its own class with no host to ask', function (): void {
+    expect(Action::make('x')->getRecordLabel())->toBeNull()
+        ->and(Action::make('x')->recordClass('App\\Entity\\BlogPost')->getRecordLabel())->toBe('blog post');
+});
+
+it('falls to the record label when nothing supplies a title', function (): void {
+    expect(Action::make('x')->recordClass('App\\Entity\\BlogPost')->getRecordTitle())->toBe('blog post');
+});
+
+it('stops at an own record object even when it is empty', function (): void {
+    $empty = new ArrayObject();
+    $action = Action::make('x')->record($empty);
+
+    ActionGroup::make([$action])->record(new DateTimeImmutable());
+
+    expect($action->getRecord())->toBe($empty);
+
+    $mismatched = Action::make('y')->record(new ArrayObject())->recordClass(DateTimeImmutable::class);
+
+    ActionGroup::make([$mismatched])->record(new DateTimeImmutable());
+
+    expect($mismatched->getRecord())->toBeNull();
 });

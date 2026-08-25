@@ -13,6 +13,7 @@ use ReflectionUnionType;
 use Sylament\Actions\Action;
 use Sylament\Actions\Enums\ActionStatus;
 use Sylament\Actions\Exceptions\ActionNotResolvableException;
+use Sylament\Schemas\Components\Component;
 use Sylament\Schemas\Concerns\HasSchemas;
 use Sylament\Schemas\Contracts\InteractsWithSchemas;
 use Sylament\Schemas\Exceptions\ValidationException;
@@ -74,15 +75,31 @@ trait HasActions
         return $this;
     }
 
+    /**
+     * The last frame's record, resolved from its key — only for a stack of one:
+     * a nested frame inherits its parent's record through prepareModalAction().
+     */
     protected function getMountedActionRecord(): mixed
     {
-        $descriptor = $this->mountedActions === []
-            ? null
-            : array_last($this->mountedActions);
+        if (count($this->mountedActions) !== 1) {
+            return null;
+        }
 
+        return $this->resolveMountedActionRecord(array_last($this->mountedActions));
+    }
+
+    /**
+     * A frame's record from its context key. A component-owned frame answers
+     * null — its record comes off the component chain — and so does a row frame
+     * on a table host, whose binding happened in resolveTableAction().
+     *
+     * @param array{name: string, arguments: array<string, mixed>, context: array<string, mixed>} $descriptor
+     */
+    protected function resolveMountedActionRecord(array $descriptor): mixed
+    {
         $recordKey = $descriptor['context']['recordKey'] ?? null;
 
-        if ($recordKey === null) {
+        if ($recordKey === null || filled($descriptor['context']['schemaComponent'] ?? null)) {
             return null;
         }
 
@@ -178,7 +195,7 @@ trait HasActions
         $originalArguments = $action->getArguments();
         $action->mergeArguments($arguments);
 
-        if (filled($record = $this->getMountedActionRecord())) {
+        if (is_object($record = $this->getMountedActionRecord()) || filled($record)) {
             $action->record($record);
         }
 
@@ -254,6 +271,10 @@ trait HasActions
             $action->rollBackDatabaseTransaction();
 
             throw $exception;
+        } finally {
+            if ($this instanceof InteractsWithTable) {
+                $this->flushCachedTableRecords();
+            }
         }
 
         if (! $hasFinalizedDatabaseTransaction) {
@@ -261,6 +282,7 @@ trait HasActions
         }
 
         if (filled($redirectUrl = $action->getPendingRedirectUrl())) {
+            $action->resetPendingRedirect();
             $this->unmountAction();
 
             return new RedirectResponse($redirectUrl);
@@ -269,6 +291,8 @@ trait HasActions
         $action->arguments($originalArguments);
 
         if (self::onlyActionNamesAndContexts($originallyMountedActions) !== self::onlyActionNamesAndContexts($this->mountedActions)) {
+            $action->clearRecordAfter();
+
             return null;
         }
 
@@ -382,6 +406,10 @@ trait HasActions
             $this->forgetMountedActionSchema($actionNestingIndex);
         }
 
+        if ($this->mountedActions === []) {
+            $action?->clearRecordAfter();
+        }
+
         $this->dispatchBrowserEvent('sylament-close-modal', ['id' => $id]);
     }
 
@@ -464,10 +492,51 @@ trait HasActions
 
         return $this->cacheSchema($schemaName, $mountedAction->getSchema(
             $this->makeSchema()
+                ->record(fn (): object|array|string|null => $this->resolveMountedActionSchemaRecord($mountedAction))
                 ->key($schemaName)
                 ->statePath("mountedActionsData.{$actionNestingIndex}")
+                ->operation($this->getMountedActionSchemaOperation($actionNestingIndex))
                 ->rootHeadingLevel(3),
         ));
+    }
+
+    /**
+     * Filament's model chain: the action's record, then its class — the host
+     * default reached only when the action is not owned by a schema component —
+     * then the owning component's record or class, then the host's own answer.
+     * A record that is neither an object nor an array record is the bare key a
+     * host resolver answered, and binds nothing — a string here means a class.
+     *
+     * @return object|array<string, mixed>|string|null
+     */
+    protected function resolveMountedActionSchemaRecord(Action $action): object|array|string|null
+    {
+        $schemaComponent = $action->getSchemaComponent();
+        $withDefault = !$schemaComponent instanceof Component;
+
+        $record = $action->getRecord(withDefault: $withDefault);
+
+        if (is_object($record)) {
+            return $record;
+        }
+
+        if (is_array($record)) {
+            return array_filter($record, is_string(...), ARRAY_FILTER_USE_KEY);
+        }
+
+        return $action->getRecordClass(withDefault: $withDefault)
+            ?? $schemaComponent?->getRecord()
+            ?? $schemaComponent?->getRecordClass()
+            ?? $this->getMountedActionSchemaRecord();
+    }
+
+    /**
+     * The dotted chain of mounted action names down to this frame — `edit`, or
+     * `edit.attachFile` one modal deeper — which is what `visibleOn('edit')` reads.
+     */
+    protected function getMountedActionSchemaOperation(int $actionNestingIndex): string
+    {
+        return implode('.', array_column(array_slice($this->mountedActions, 0, $actionNestingIndex + 1), 'name'));
     }
 
     public function mountedActionHasSchema(?Action $mountedAction = null): bool
@@ -623,6 +692,49 @@ trait HasActions
         return null;
     }
 
+    public function getDefaultActionSchemaResolver(Action $action): ?Closure
+    {
+        return null;
+    }
+
+    /**
+     * @return object|array<string, mixed>|null
+     */
+    public function getDefaultActionRecord(Action $action): object|array|null
+    {
+        return null;
+    }
+
+    public function getDefaultActionRecordTitle(Action $action): ?string
+    {
+        return null;
+    }
+
+    /**
+     * @return class-string|null
+     */
+    public function getDefaultActionRecordClass(Action $action): ?string
+    {
+        return null;
+    }
+
+    public function getDefaultActionRecordLabel(Action $action): ?string
+    {
+        return null;
+    }
+
+    /**
+     * The record or class the mounted action's schema binds when the action's
+     * own chain answers nothing — a list page answers its resource's class, a
+     * record page its record.
+     *
+     * @return object|array<string, mixed>|string|null
+     */
+    protected function getMountedActionSchemaRecord(): object|array|string|null
+    {
+        return null;
+    }
+
     public function cacheAction(Action $action): Action
     {
         $action->liveComponent($this);
@@ -682,7 +794,13 @@ trait HasActions
                 ?? throw new ActionNotResolvableException("Action [{$descriptor['name']}] was not found for action [{$parentAction->getName()}].");
         }
 
-        return $this->getAction($descriptor['name']);
+        $resolvedAction = $this->getAction($descriptor['name']);
+
+        if ($resolvedAction !== null && (is_object($record = $this->resolveMountedActionRecord($descriptor)) || filled($record))) {
+            $resolvedAction->record($record);
+        }
+
+        return $resolvedAction;
     }
 
     /**

@@ -14,7 +14,7 @@
     ],
     "require": {
         "php": "^8.5",
-        "doctrine/orm": "^3.6",
+        "doctrine/orm": "^3.7",
         "sylament/forms": "self.version",
         "sylament/schemas": "self.version",
         "sylament/support": "self.version",
@@ -23,8 +23,8 @@
         "symfony/property-access": "^8.1",
         "symfony/service-contracts": "^3.6",
         "symfony/string": "^8.1",
-        "symfony/ux-live-component": "^3.1",
-        "symfony/ux-twig-component": "^3.1"
+        "symfony/ux-live-component": "^3.5",
+        "symfony/ux-twig-component": "^3.5"
     },
     "suggest": {
         "sylament/notifications": "Turns an action's success and failure notification titles into rendered toasts.",
@@ -33,11 +33,6 @@
     "autoload": {
         "psr-4": {
             "Sylament\\Actions\\": "src/"
-        }
-    },
-    "autoload-dev": {
-        "psr-4": {
-            "Sylament\\Actions\\Tests\\": "tests/"
         }
     }
 }

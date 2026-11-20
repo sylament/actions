@@ -5,8 +5,12 @@ declare(strict_types=1);
 namespace Sylament\Actions;
 
 use Closure;
+use Doctrine\ORM\ORMInvalidArgumentException;
 use LogicException;
+use ReflectionClass;
+use ReflectionMethod;
 use Sylament\Actions\Concerns\CanCustomizeProcess;
+use Sylament\Actions\Concerns\RefusesUnmappedData;
 use Sylament\Schemas\Schema;
 use Sylament\Schemas\State\Relationship;
 
@@ -15,6 +19,7 @@ use function Sylament\Support\only;
 class CreateAction extends Action
 {
     use CanCustomizeProcess;
+    use RefusesUnmappedData;
 
     protected bool|Closure $canCreateAnother = true;
 
@@ -151,29 +156,123 @@ class CreateAction extends Action
     }
 
     /**
-     * The default persistence step `using()` replaces: map the validated —
-     * and, where `mutateDataUsing()` asked, mutated — state onto a new record
-     * of the action's class, then flush it. A relationship in force joins the
-     * record to its owner in the same flush.
+     * The default persistence step `using()` replaces: map the validated — and,
+     * where `mutateDataUsing()` asked, mutated — state onto a new record of the
+     * action's class, then flush it. A path the hook added that no component of
+     * the schema maps is refused by name before anything is built. A
+     * relationship in force joins the record to its owner before the state is
+     * mapped, so the record check that ends the mapping sees an identifier field
+     * the association fills, and again after it, so the relationship still wins
+     * over a field the form maps onto the same association; the schema is bound
+     * to that record for the mapping alone, and a many-to-many owner's
+     * collection gives the record back when the mapping refuses it, since
+     * nothing else takes it out again. The record check reads the schema's own
+     * reader, rebound to the manager the flush writes through. A record whose
+     * assigned key is still blank once `persist()` has run every prePersist
+     * listener is refused by name before the flush and taken back out of the
+     * unit of work — except one whose whole key flattens to `''`, which
+     * Doctrine cannot take back and which stays scheduled. A many-to-many owner
+     * hands the record back whenever `persist()` or that read fails, Doctrine's
+     * own refusal of a key still null rethrown unchanged.
      *
      * @param array<string, mixed> $data
      * @param class-string $recordClass
+     *
+     * @throws LogicException when the hook added a path no component maps, when the record class requires constructor arguments, or when the persisted record's assigned key is still blank
      */
     private function createRecord(array $data, Schema $schema, string $recordClass): object
     {
-        $record = $schema->record($recordClass)->getData($data);
+        $this->refuseUnmappedData($schema, $data);
 
-        $manager = $this->getEntityManagerForRecord($record);
-        $manager->persist($record);
+        $manager = $this->getEntityManagerForRecord($recordClass);
+        $recordReader = $schema->getAssociationReader()->withEntityManager($manager);
+
+        $schema->setAssociationReader($recordReader);
 
         $relationship = $this->getRelationship();
 
         if ($relationship instanceof Relationship) {
-            $this->getAssociationReader()->attach($relationship, $record);
+            $record = $this->getPropertyAccessor()->constructRecord(
+                $recordClass,
+                sprintf('a new record for the [%s] action', $this->getName()),
+                "build it in the action's using() closure.",
+            );
+
+            $reader = $this->getAssociationReader();
+            $reader->attach($relationship, $record);
+            $mapped = false;
+
+            try {
+                $schema->record($record)->getData($data);
+                $mapped = true;
+            } finally {
+                $schema->record($recordClass);
+
+                if (! $mapped && $reader->describeRelationship($relationship)->isManyToMany) {
+                    $reader->detach($relationship, $record);
+                }
+            }
+
+            $reader->attach($relationship, $record);
+        } else {
+            $this->refuseUnbuildableRecordClass($recordClass);
+
+            $record = $schema->record($recordClass)->getData($data);
+        }
+
+        $persisted = false;
+
+        try {
+            $manager->persist($record);
+
+            if ($recordReader->hasBlankAssignedIdentifier($record)) {
+                try {
+                    $manager->detach($record);
+                } catch (ORMInvalidArgumentException) {
+                    // Doctrine can neither detach nor remove a persisted entity whose identity hash is '': it stays scheduled, and nothing flushes after the refusal.
+                }
+
+                throw new LogicException(sprintf(
+                    "The [%s] action built a [%s] whose identifier is still blank after persist(), so it was not saved. Give every identifier field a field in the action's schema() — a Hidden one for a value the user should not type — or fill it in a prePersist listener.%s",
+                    $this->getName(),
+                    $record::class,
+                    $schema->isRecordKeyValidated() ? '' : ' The schema switches the key rules off with validateRecordKey(false), so a key field it maps is not refused while blank; switch them back on to have the blank field refused under it.',
+                ));
+            }
+
+            $persisted = true;
+        } finally {
+            if (! $persisted && $relationship instanceof Relationship && $this->getAssociationReader()->describeRelationship($relationship)->isManyToMany) {
+                $this->getAssociationReader()->detach($relationship, $record);
+            }
         }
 
         $manager->flush();
 
         return $record;
+    }
+
+    /**
+     * Refuse, naming `using()`, a record class whose constructor requires
+     * arguments: the plain arm maps under the class binding, where `getData()`
+     * would construct it and refuse with the schema's own advice, which an
+     * action cannot follow. `constructRecord()` words the refusal, as it does
+     * for the relationship arm.
+     *
+     * @param class-string $recordClass
+     *
+     * @throws LogicException when the class's constructor requires arguments
+     */
+    private function refuseUnbuildableRecordClass(string $recordClass): void
+    {
+        $constructor = new ReflectionClass($recordClass)->getConstructor();
+
+        if ($constructor instanceof ReflectionMethod && $constructor->getNumberOfRequiredParameters() > 0) {
+            $this->getPropertyAccessor()->constructRecord(
+                $recordClass,
+                sprintf('a new record for the [%s] action', $this->getName()),
+                "build it in the action's using() closure.",
+            );
+        }
     }
 }

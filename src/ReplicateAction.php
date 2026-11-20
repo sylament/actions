@@ -5,9 +5,16 @@ declare(strict_types=1);
 namespace Sylament\Actions;
 
 use Closure;
+use Doctrine\ORM\EntityManagerInterface;
+use Doctrine\ORM\Events;
+use Doctrine\ORM\Mapping\ClassMetadata;
+use Doctrine\ORM\ORMInvalidArgumentException;
+use LogicException;
 use Sylament\Actions\Concerns\CanCustomizeProcess;
 use Sylament\Actions\Concerns\CanMutateRecordData;
+use Sylament\Actions\Concerns\RefusesUnmappedData;
 use Sylament\Actions\Replication\RecordReplicator;
+use Sylament\Schemas\Identity\RecordKey;
 use Sylament\Schemas\Schema;
 use Sylament\Support\Evaluation\ClosureParameter;
 
@@ -17,6 +24,7 @@ class ReplicateAction extends Action
 {
     use CanCustomizeProcess;
     use CanMutateRecordData;
+    use RefusesUnmappedData;
 
     protected ?Closure $beforeReplicaSaved = null;
 
@@ -106,19 +114,37 @@ class ReplicateAction extends Action
     /**
      * The default persistence step `using()` replaces: copy the record through
      * Doctrine's metadata, map the modal's validated state onto the copy — or,
-     * with no modal, the mutated field bag — then flush it.
+     * with no modal, the mutated field bag — then flush it. A path a modal's
+     * hook added that no component maps is refused by name before the copy is
+     * built. One reader — the mounted schema's, or with no modal the action's
+     * own — rebound to the manager the copy is written through, answers the
+     * modal's record check and both key checks below. A replica whose assigned
+     * key is incomplete is refused by name before anything is written:
+     * before `persist()` where no filler could complete it, and after it —
+     * once every prePersist callback and listener has run — where one was
+     * exempted and left a key half blank. A key a `beforeReplicaSaved()` hook
+     * leaves is checked again: a modal answers a taken one under its field, and
+     * without a modal a taken key is refused by name before `persist()`.
      *
      * @param array<string, mixed> $data
+     *
+     * @throws LogicException when the modal's hook added a path no component maps
      */
     private function replicateRecord(array $data, ?Schema $schema, object $record): object
     {
+        if ($schema instanceof Schema) {
+            $this->refuseUnmappedData($schema, $data);
+        }
+
         $manager = $this->getEntityManagerForRecord($record);
+        $reader = ($schema?->getAssociationReader() ?? $this->getAssociationReader())->withEntityManager($manager);
         $replicator = new RecordReplicator($manager);
         $excluded = $this->getExcludedAttributes() ?? [];
         $replica = $replicator->replicate($record, $excluded);
         $this->replica = $replica;
 
         if ($schema instanceof Schema) {
+            $schema->setAssociationReader($reader);
             $schema->record($replica)->getData($data);
         } elseif ($data === [] && $this->mutateRecordDataUsing instanceof Closure) {
             $replicator->setFieldValues($replica, $this->mutateRecordData(except($replicator->getFieldValues($record), $excluded)));
@@ -126,10 +152,66 @@ class ReplicateAction extends Action
 
         $this->callBeforeReplicaSaved();
 
+        if ($schema instanceof Schema && $this->beforeReplicaSaved instanceof Closure) {
+            $schema->getLiveComponentOrNull()?->validateSchemaRecord($schema, $replica);
+        }
+
+        $metadata = $manager->getClassMetadata($replica::class);
+
+        if (
+            $reader->hasIncompleteAssignedIdentifier($replica)
+            || ($metadata->isIdentifierNatural() && ! $this->mayAssignIdentifierOnPersist($manager, $metadata) && RecordKey::values($manager, $replica) !== null && RecordKey::find($manager, $replica) === null)
+        ) {
+            throw $this->refuseIncompleteReplica($replica);
+        }
+
+        if (! $schema instanceof Schema && $reader->findTakenIdentifiers($replica) !== []) {
+            throw $this->refuseTakenReplica($replica);
+        }
+
         $manager->persist($replica);
+
+        if ($metadata->isIdentifierNatural() && RecordKey::find($manager, $replica) === null) {
+            try {
+                $manager->detach($replica);
+            } catch (ORMInvalidArgumentException) {
+                // Doctrine can neither detach nor remove a persisted entity whose identity hash is '': it stays scheduled, and nothing flushes after the refusal.
+            }
+
+            throw $this->refuseIncompleteReplica($replica);
+        }
+
         $manager->flush();
 
         return $replica;
+    }
+
+    /**
+     * @param ClassMetadata<object> $metadata
+     */
+    private function mayAssignIdentifierOnPersist(EntityManagerInterface $manager, ClassMetadata $metadata): bool
+    {
+        return $metadata->hasLifecycleCallbacks(Events::prePersist)
+            || isset($metadata->entityListeners[Events::prePersist])
+            || $manager->getEventManager()->hasListeners(Events::prePersist);
+    }
+
+    private function refuseIncompleteReplica(object $replica): LogicException
+    {
+        return new LogicException(sprintf(
+            'The [%s] action built a replica of [%s] whose identifier is incomplete, so it cannot be saved as a new record. Put every identifier field the copy leaves unset in its schema() — enabled and dehydrated — or set it in beforeReplicaSaved().',
+            $this->getName(),
+            $replica::class,
+        ));
+    }
+
+    private function refuseTakenReplica(object $replica): LogicException
+    {
+        return new LogicException(sprintf(
+            'The [%s] action built a replica of [%s] whose key another record already holds, so it cannot be saved as a new record. Give the copy a key of its own: ask for it in schema(), or set it in beforeReplicaSaved() — an identifier association the copy keeps is left out with excludeAttributes().',
+            $this->getName(),
+            $replica::class,
+        ));
     }
 
     protected function resolveDefaultClosureDependencyForEvaluationByName(string $parameterName): ?ClosureParameter

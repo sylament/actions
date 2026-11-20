@@ -7,6 +7,8 @@ namespace Sylament\Actions;
 use BackedEnum;
 use Closure;
 use Doctrine\ORM\QueryBuilder;
+use Doctrine\Persistence\ObjectManager;
+use ReflectionClass;
 use Sylament\Actions\Concerns\BelongsToGroup;
 use Sylament\Actions\Concerns\BelongsToLiveComponent;
 use Sylament\Actions\Concerns\BelongsToSchemaComponent;
@@ -563,7 +565,7 @@ class Action extends ViewComponent
     {
         $context = [];
 
-        if (filled($recordKey = $this->resolveRecordKey($this->getRecord(withDefault: false)))) {
+        if (filled($recordKey = $this->resolveContextRecordKey())) {
             $context['recordKey'] = $recordKey;
         }
 
@@ -584,6 +586,57 @@ class Action extends ViewComponent
         }
 
         return $context;
+    }
+
+    /**
+     * A table-bound action carries the key the table itself minted for the
+     * record — a composite identifier included — so the mount resolves through
+     * `getTableRecord()` against the same string the row rendered. Every other
+     * action keeps the literal `id` reading, and only where one scalar field is
+     * the record's whole identity: a host resolves the key by the record's own
+     * identity, which one field out of several never spells.
+     */
+    private function resolveContextRecordKey(): ?string
+    {
+        $record = $this->getRecord(withDefault: false);
+        $table = $this->getTable();
+        $recordClass = $table?->getRecordClass();
+
+        if ($table instanceof Table && $recordClass !== null && $record instanceof $recordClass) {
+            return $table->getRecordKey($record);
+        }
+
+        if (is_object($record) && ! $this->isRecordKeyedByOneScalarField($record)) {
+            return null;
+        }
+
+        return $this->resolveRecordKey($record);
+    }
+
+    /**
+     * Whether one scalar field is the record's whole identity, whatever that
+     * field is called — the shape a single property read can name. True
+     * wherever no mapping answers, too: an anonymous class, which Doctrine
+     * refuses to describe at all, a class no manager maps, and a record reached
+     * without a registry. The literal reading is then the only identity there
+     * is.
+     */
+    private function isRecordKeyedByOneScalarField(object $record): bool
+    {
+        if (new ReflectionClass($record)->isAnonymous()) {
+            return true;
+        }
+
+        $manager = $this->managerRegistry?->getManagerForClass($record::class);
+
+        if (! $manager instanceof ObjectManager) {
+            return true;
+        }
+
+        $metadata = $manager->getClassMetadata($record::class);
+        $identifier = $metadata->getIdentifier();
+
+        return count($identifier) === 1 && ! $metadata->hasAssociation($identifier[0]);
     }
 
     public function getClone(): static

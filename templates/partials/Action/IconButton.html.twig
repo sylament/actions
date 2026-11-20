@@ -1,7 +1,7 @@
 {% set clickWiringSuppressed = component.getUrl or component.isDisabled %}
-{% set hasEventBinding = component.getEvent
+{% set hasEventBinding = component.isLiveComponentClickHandlerEnabled
+    and component.getEvent
     and not component.getClientClickHandler
-    and not component.canSubmitForm
     and not clickWiringSuppressed %}
 {% set dispatchAttributes = hasEventBinding
     ? {
@@ -52,7 +52,7 @@
     :icon="component.getIcon"
     :iconSize="component.getIconSize"
     :label="component.getLabel ?? component.getName"
-    :color="component.getColor"
+    :color="component.getColor ?? 'primary'"
     :size="component.getSize ?? 'md'"
     :disabled="component.isDisabled"
     :tag="component.getUrl ? 'a' : 'button'"

@@ -9,6 +9,8 @@ use Sylament\Actions\Action;
 use Sylament\Actions\ActionGroup;
 use Sylament\Support\Enums\Alignment;
 use Sylament\Support\Enums\SlideOverPosition;
+use Symfony\Component\Translation\TranslatableMessage;
+use Symfony\Contracts\Translation\TranslatableInterface;
 use Twig\Markup;
 
 use function Sylament\Support\filled;
@@ -54,9 +56,9 @@ trait CanOpenModal
 
     protected Action|bool|Closure|null $modalSubmitAction = null;
 
-    protected string|Markup|Closure|null $modalHeading = null;
+    protected string|Markup|TranslatableInterface|Closure|null $modalHeading = null;
 
-    protected string|Markup|Closure|null $modalDescription = null;
+    protected string|Markup|TranslatableInterface|Closure|null $modalDescription = null;
 
     protected Markup|Closure|null $modalContent = null;
 
@@ -69,9 +71,9 @@ trait CanOpenModal
      */
     protected string|array|Closure|null $modalIconColor = null;
 
-    protected string|Closure|null $modalSubmitActionLabel = null;
+    protected string|TranslatableInterface|Closure|null $modalSubmitActionLabel = null;
 
-    protected string|Closure|null $modalCancelActionLabel = null;
+    protected string|TranslatableInterface|Closure|null $modalCancelActionLabel = null;
 
     protected string|Closure|null $modalWidth = null;
 
@@ -111,14 +113,14 @@ trait CanOpenModal
         return $this;
     }
 
-    public function modalHeading(string|Markup|Closure|null $heading = null): static
+    public function modalHeading(string|Markup|TranslatableInterface|Closure|null $heading = null): static
     {
         $this->modalHeading = $heading;
 
         return $this;
     }
 
-    public function modalDescription(string|Markup|Closure|null $description = null): static
+    public function modalDescription(string|Markup|TranslatableInterface|Closure|null $description = null): static
     {
         $this->modalDescription = $description;
 
@@ -203,14 +205,14 @@ trait CanOpenModal
         return $this;
     }
 
-    public function modalSubmitActionLabel(string|Closure|null $label = null): static
+    public function modalSubmitActionLabel(string|TranslatableInterface|Closure|null $label = null): static
     {
         $this->modalSubmitActionLabel = $label;
 
         return $this;
     }
 
-    public function modalCancelActionLabel(string|Closure|null $label = null): static
+    public function modalCancelActionLabel(string|TranslatableInterface|Closure|null $label = null): static
     {
         $this->modalCancelActionLabel = $label;
 
@@ -347,7 +349,7 @@ trait CanOpenModal
 
     public function getCustomModalHeading(): string|Markup|null
     {
-        return $this->evaluate($this->modalHeading);
+        return $this->translateText($this->evaluate($this->modalHeading));
     }
 
     public function hasCustomModalHeading(): bool
@@ -362,12 +364,12 @@ trait CanOpenModal
 
     public function getModalDescription(): string|Markup|null
     {
-        if (filled($description = $this->evaluate($this->modalDescription))) {
+        if (filled($description = $this->translateText($this->evaluate($this->modalDescription)))) {
             return $description;
         }
 
         if ($this->isConfirmationRequired()) {
-            return 'Are you sure you would like to do this?';
+            return new TranslatableMessage('modal.confirmation', [], 'sylament-actions')->trans($this->getTranslator());
         }
 
         return null;
@@ -621,16 +623,25 @@ trait CanOpenModal
 
     public function getModalSubmitActionLabel(): string
     {
-        if (filled($label = $this->evaluate($this->modalSubmitActionLabel))) {
+        $label = $this->evaluate($this->modalSubmitActionLabel);
+        $label = $label instanceof TranslatableInterface ? $label->trans($this->getTranslator()) : $label;
+
+        if (filled($label)) {
             return $label;
         }
 
-        return $this->isConfirmationRequired() ? 'Confirm' : 'Submit';
+        $message = $this->isConfirmationRequired()
+            ? new TranslatableMessage('modal.actions.confirm.label', [], 'sylament-actions')
+            : new TranslatableMessage('modal.actions.submit.label', [], 'sylament-actions');
+
+        return $message->trans($this->getTranslator());
     }
 
     public function getModalCancelActionLabel(): string
     {
-        return $this->evaluate($this->modalCancelActionLabel) ?? 'Cancel';
+        $label = $this->evaluate($this->modalCancelActionLabel) ?? new TranslatableMessage('modal.actions.cancel.label', [], 'sylament-actions');
+
+        return $label instanceof TranslatableInterface ? $label->trans($this->getTranslator()) : $label;
     }
 
     public function getModalWidth(): string
